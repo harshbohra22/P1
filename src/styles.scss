@@ -1,0 +1,14 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: #09090f;
+  color: #e8e8f0;
+  font-family: 'Outfit', sans-serif;
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #252535; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #4ecdc4; }

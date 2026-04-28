@@ -1,0 +1,195 @@
+<div class="app-shell" [class.dragging]="isDragging"
+     (dragover)="onDragOver($event)" (dragleave)="onDragLeave()" (drop)="onDrop($event)">
+
+  <!-- ── Top Bar ──────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="brand-icon">⚙</span>
+      <span class="brand-name">EXPLODE<span class="brand-accent">R</span></span>
+      <span class="brand-tag">3D Part Viewer</span>
+    </div>
+
+    <div class="topbar-actions">
+      <label class="btn btn-upload" title="Load GLB/GLTF file">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        Upload GLB
+        <input type="file" accept=".glb,.gltf" (change)="onFileSelect($event)" hidden>
+      </label>
+
+      <button class="btn btn-ghost" (click)="loadDemoModel()" title="Load demo engine">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+        </svg>
+        Demo Model
+      </button>
+
+      <button class="btn btn-ghost" (click)="resetAll()" title="Reset view">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 2v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 8"/>
+        </svg>
+        Reset
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Loading bar ───────────────────────────────────────────────── -->
+  <div class="loading-bar" [class.active]="isLoading">
+    <div class="loading-fill" [style.width.%]="loadProgress"></div>
+  </div>
+
+  <!-- ── Main layout ───────────────────────────────────────────────── -->
+  <main class="main-layout">
+
+    <!-- ── Left Sidebar ───────────────────────────────────────────── -->
+    <aside class="sidebar">
+
+      <!-- Tab switcher -->
+      <div class="tab-row">
+        <button class="tab-btn" [class.active]="activeTab === 'parts'" (click)="activeTab = 'parts'">
+          Parts ({{ parts.length }})
+        </button>
+        <button class="tab-btn" [class.active]="activeTab === 'controls'" (click)="activeTab = 'controls'">
+          Controls
+        </button>
+      </div>
+
+      <!-- ── Parts tab ─────────────────────────────────────────────── -->
+      <div class="tab-content" *ngIf="activeTab === 'parts'">
+
+        <div class="parts-header">
+          <span class="parts-count">{{ getVisibleCount() }}/{{ parts.length }} visible</span>
+          <button class="toggle-all-btn" (click)="toggleAllVisibility()">
+            {{ showAllParts ? 'Hide All' : 'Show All' }}
+          </button>
+        </div>
+
+        <div class="parts-list">
+          <div *ngFor="let part of parts"
+               class="part-item"
+               [class.selected]="selectedPart?.id === part.id"
+               [class.hidden-part]="!part.visible"
+               (click)="selectPart(part)">
+
+            <div class="part-dot" [style.background]="part.color"></div>
+            <span class="part-name">{{ part.name }}</span>
+
+            <button class="vis-btn" (click)="togglePartVisibility(part); $event.stopPropagation()"
+                    [title]="part.visible ? 'Hide' : 'Show'">
+              <svg *ngIf="part.visible" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg *ngIf="!part.visible" width="14" height="14" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Selected part info card -->
+        <div class="part-info-card" *ngIf="selectedPart">
+          <div class="info-header">
+            <div class="info-dot" [style.background]="selectedPart.color"></div>
+            <span>{{ selectedPart.name }}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">ID</span>
+            <span class="info-val">{{ selectedPart.id }}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Position X</span>
+            <span class="info-val">{{ selectedPart.mesh.position.x | number:'1.2-2' }}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Position Y</span>
+            <span class="info-val">{{ selectedPart.mesh.position.y | number:'1.2-2' }}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Position Z</span>
+            <span class="info-val">{{ selectedPart.mesh.position.z | number:'1.2-2' }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Controls tab ──────────────────────────────────────────── -->
+      <div class="tab-content" *ngIf="activeTab === 'controls'">
+
+        <!-- Explode slider -->
+        <div class="control-section">
+          <div class="control-label">
+            <span>Explode</span>
+            <span class="control-value">{{ (explodeValue * 100) | number:'1.0-0' }}%</span>
+          </div>
+          <input type="range" min="0" max="2" step="0.01"
+                 [value]="explodeValue"
+                 (input)="onExplodeChange(+$any($event.target).value)"
+                 class="slider explode-slider">
+          <div class="step-btns">
+            <button class="step-btn" (click)="explodeStep(-0.2)">−</button>
+            <button class="step-btn" (click)="onExplodeChange(0)">Reset</button>
+            <button class="step-btn" (click)="explodeStep(0.2)">+</button>
+          </div>
+        </div>
+
+        <!-- Quick explode presets -->
+        <div class="control-section">
+          <div class="control-label"><span>Presets</span></div>
+          <div class="preset-btns">
+            <button class="preset-btn" (click)="onExplodeChange(0)">None</button>
+            <button class="preset-btn" (click)="onExplodeChange(0.5)">25%</button>
+            <button class="preset-btn" (click)="onExplodeChange(1)">50%</button>
+            <button class="preset-btn" (click)="onExplodeChange(2)">Full</button>
+          </div>
+        </div>
+
+        <!-- Wireframe toggle -->
+        <div class="control-section">
+          <div class="control-label"><span>Wireframe</span></div>
+          <button class="toggle-btn" [class.on]="wireframe" (click)="toggleWireframe()">
+            <span class="toggle-knob"></span>
+            <span>{{ wireframe ? 'ON' : 'OFF' }}</span>
+          </button>
+        </div>
+
+        <!-- Camera tips -->
+        <div class="tips-box">
+          <div class="tips-title">🖱 Controls</div>
+          <div class="tip">Left drag → Orbit</div>
+          <div class="tip">Right drag → Pan</div>
+          <div class="tip">Scroll → Zoom</div>
+          <div class="tip">Click part → Select</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── 3D Viewport ─────────────────────────────────────────────── -->
+    <section class="viewport">
+      <app-three-viewer #viewer
+        (partClicked)="onPartClicked($event)"
+        (partHovered)="onPartHovered($event)">
+      </app-three-viewer>
+
+      <!-- Drag-drop overlay -->
+      <div class="drop-overlay" [class.visible]="isDragging">
+        <div class="drop-content">
+          <div class="drop-icon">📦</div>
+          <div class="drop-text">Drop GLB / GLTF here</div>
+        </div>
+      </div>
+
+      <!-- Status badge -->
+      <div class="status-badge">
+        <span *ngIf="hoveredPart" class="hovered-label">↗ {{ hoveredPart.name }}</span>
+        <span *ngIf="!hoveredPart && selectedPart" class="selected-label">✓ {{ selectedPart.name }}</span>
+        <span *ngIf="!hoveredPart && !selectedPart">{{ parts.length }} parts loaded</span>
+      </div>
+    </section>
+
+  </main>
+</div>
