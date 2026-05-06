@@ -26,6 +26,13 @@
         Demo Model
       </button>
 
+      <button class="btn btn-ghost" (click)="playSequence()" title="Play Sequence" style="color: #4ecdc4; border-color: #4ecdc4;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        Play Sequence
+      </button>
+
       <button class="btn btn-ghost" (click)="resetAll()" title="Reset view">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M3 2v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 8"/>
@@ -66,30 +73,36 @@
           </button>
         </div>
 
-        <div class="parts-list">
-          <div *ngFor="let part of parts"
-               class="part-item"
-               [class.selected]="selectedPart?.id === part.id"
-               [class.hidden-part]="!part.visible"
-               (click)="selectPart(part)">
-
-            <div class="part-dot" [style.background]="part.color"></div>
-            <span class="part-name">{{ part.name }}</span>
-
-            <button class="vis-btn" (click)="togglePartVisibility(part); $event.stopPropagation()"
-                    [title]="part.visible ? 'Hide' : 'Show'">
-              <svg *ngIf="part.visible" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-              <svg *ngIf="!part.visible" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                   stroke="currentColor" stroke-width="2">
-                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                <line x1="1" y1="1" x2="23" y2="23"/>
-              </svg>
-            </button>
-          </div>
+        <div class="parts-list-container" style="flex: 1; overflow: hidden; display: flex; flex-direction: column;">
+          <p-treeTable [value]="treeNodes" [scrollable]="true" scrollHeight="flex"
+                       selectionMode="single" dataKey="id"
+                       styleClass="p-datatable-sm">
+            <ng-template pTemplate="header">
+              <tr>
+                <th>Part Name</th>
+                <th style="width: 4rem; text-align: center"><i class="pi pi-eye"></i></th>
+              </tr>
+            </ng-template>
+            <ng-template pTemplate="body" let-rowNode let-rowData="rowData">
+              <tr [ttRow]="rowNode" 
+                  [class.selected]="selectedPart?.id === rowData.id" 
+                  (click)="selectPart(rowData)"
+                  (mouseenter)="onPartHovered(rowData)"
+                  (mouseleave)="onPartHovered(null)"
+                  style="cursor: pointer;">
+                <td>
+                  <p-treeTableToggler [rowNode]="rowNode"></p-treeTableToggler>
+                  <div class="part-dot" [style.background]="rowData.color" style="display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; vertical-align: middle;"></div>
+                  <span class="part-name" [style.opacity]="rowData.visible ? 1 : 0.5">{{ rowData.name }}</span>
+                </td>
+                <td style="text-align: center">
+                  <button class="vis-btn" (click)="togglePartVisibility(rowData); $event.stopPropagation()" style="background:none; border:none; color:var(--text-color); cursor:pointer;">
+                    <i [class]="rowData.visible ? 'pi pi-eye' : 'pi pi-eye-slash'"></i>
+                  </button>
+                </td>
+              </tr>
+            </ng-template>
+          </p-treeTable>
         </div>
 
         <!-- Selected part info card -->
@@ -113,6 +126,15 @@
           <div class="info-row">
             <span class="info-label">Position Z</span>
             <span class="info-val">{{ selectedPart.mesh.position.z | number:'1.2-2' }}</span>
+          </div>
+
+          <div class="info-actions" style="margin-top: 12px; display: flex; gap: 8px;">
+            <button *ngIf="!isIsolated" class="btn btn-ghost" (click)="isolateSelectedPart()" style="flex: 1; border: 1px solid #4ecdc4; color: #4ecdc4; font-size: 12px; padding: 4px;">
+              🔍 Isolate
+            </button>
+            <button *ngIf="isIsolated" class="btn btn-ghost" (click)="exitIsolation()" style="flex: 1; border: 1px solid #ff6b6b; color: #ff6b6b; font-size: 12px; padding: 4px;">
+              ❌ Exit Focus
+            </button>
           </div>
         </div>
       </div>

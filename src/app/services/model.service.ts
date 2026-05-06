@@ -12,6 +12,7 @@ export interface ModelPart {
   color: string;
   visible: boolean;
   highlighted: boolean;
+  children?: ModelPart[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -82,15 +83,50 @@ export class ModelService {
     engineMesh.castShadow = true;
     engineMesh.receiveShadow = true;
     engineMesh.position.set(0, 0, 0);
-    parts.push(this.createPart('engine-block', 'Engine Block', engineMesh));
+    const blockPart = this.createPart('engine-block', 'Engine Block', engineMesh);
+    parts.push(blockPart);
 
-    // ── Cylinder Head ─────────────────────────────────────────────────────
+    // ── Cylinder Head Assembly ─────────────────────────────────────────────
+    const headAssembly: ModelPart = {
+      id: 'head-assembly',
+      name: 'Cylinder Head Assembly',
+      mesh: new THREE.Group(),
+      originalPosition: new THREE.Vector3(),
+      originalRotation: new THREE.Euler(),
+      color: '#ffffff',
+      visible: true,
+      highlighted: false,
+      children: []
+    };
+    parts.push(headAssembly);
+
     const headGeo = new THREE.BoxGeometry(2.8, 0.5, 1.8);
     const headMat = new THREE.MeshPhongMaterial({ color: new THREE.Color(nextColor()) });
     const headMesh = new THREE.Mesh(headGeo, headMat);
     headMesh.name = 'Cylinder Head';
     headMesh.position.set(0, 1.1, 0);
-    parts.push(this.createPart('cylinder-head', 'Cylinder Head', headMesh));
+    headAssembly.children!.push(this.createPart('cylinder-head', 'Cylinder Head', headMesh));
+
+    const vcGeo = new THREE.BoxGeometry(2.6, 0.3, 1.6);
+    const vcMat = new THREE.MeshPhongMaterial({ color: new THREE.Color(nextColor()) });
+    const vcMesh = new THREE.Mesh(vcGeo, vcMat);
+    vcMesh.name = 'Valve Cover';
+    vcMesh.position.set(0, 1.5, 0);
+    headAssembly.children!.push(this.createPart('valve-cover', 'Valve Cover', vcMesh));
+
+    // ── Rotating Assembly ──────────────────────────────────────────────────
+    const rotatingAssembly: ModelPart = {
+      id: 'rotating-assembly',
+      name: 'Rotating Assembly',
+      mesh: new THREE.Group(),
+      originalPosition: new THREE.Vector3(),
+      originalRotation: new THREE.Euler(),
+      color: '#ffffff',
+      visible: true,
+      highlighted: false,
+      children: []
+    };
+    parts.push(rotatingAssembly);
 
     // ── Pistons (x4) ─────────────────────────────────────────────────────
     [-1.0, -0.33, 0.33, 1.0].forEach((x, idx) => {
@@ -99,7 +135,7 @@ export class ModelService {
       const pMesh = new THREE.Mesh(pGeo, pMat);
       pMesh.name = `Piston ${idx + 1}`;
       pMesh.position.set(x, 0.2, 0);
-      parts.push(this.createPart(`piston-${idx + 1}`, `Piston ${idx + 1}`, pMesh));
+      rotatingAssembly.children!.push(this.createPart(`piston-${idx + 1}`, `Piston ${idx + 1}`, pMesh));
     });
 
     // ── Crankshaft ────────────────────────────────────────────────────────
@@ -109,7 +145,7 @@ export class ModelService {
     crankMesh.name = 'Crankshaft';
     crankMesh.rotation.z = Math.PI / 2;
     crankMesh.position.set(0, -0.5, 0);
-    parts.push(this.createPart('crankshaft', 'Crankshaft', crankMesh));
+    rotatingAssembly.children!.push(this.createPart('crankshaft', 'Crankshaft', crankMesh));
 
     // ── Oil Pan ───────────────────────────────────────────────────────────
     const oilGeo = new THREE.BoxGeometry(2.8, 0.4, 1.8);
@@ -126,14 +162,6 @@ export class ModelService {
     tcMesh.name = 'Timing Cover';
     tcMesh.position.set(1.6, 0, 0);
     parts.push(this.createPart('timing-cover', 'Timing Cover', tcMesh));
-
-    // ── Valve Cover ──────────────────────────────────────────────────────
-    const vcGeo = new THREE.BoxGeometry(2.6, 0.3, 1.6);
-    const vcMat = new THREE.MeshPhongMaterial({ color: new THREE.Color(nextColor()) });
-    const vcMesh = new THREE.Mesh(vcGeo, vcMat);
-    vcMesh.name = 'Valve Cover';
-    vcMesh.position.set(0, 1.5, 0);
-    parts.push(this.createPart('valve-cover', 'Valve Cover', vcMesh));
 
     // ── Exhaust Manifold ──────────────────────────────────────────────────
     const exGeo = new THREE.BoxGeometry(2.4, 0.3, 0.2);

@@ -5,11 +5,13 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ThreeViewerComponent } from './components/viewer/three-viewer.component';
 import { ModelService, ModelPart } from './services/model.service';
+import { TreeTableModule } from 'primeng/treetable';
+import { TreeNode } from 'primeng/api';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, FormsModule, ThreeViewerComponent],
+  imports: [CommonModule, FormsModule, ThreeViewerComponent, TreeTableModule],
   templateUrl: './app.component.html',
   styleUrls: ['./app.component.scss']
 })
@@ -17,6 +19,7 @@ export class AppComponent implements OnInit {
   @ViewChild('viewer') viewerRef!: ThreeViewerComponent;
 
   parts: ModelPart[] = [];
+  treeNodes: TreeNode[] = [];
   selectedPart: ModelPart | null = null;
   hoveredPart: ModelPart | null = null;
 
@@ -31,12 +34,26 @@ export class AppComponent implements OnInit {
   constructor(
     private modelService: ModelService,
     private cdr: ChangeDetectorRef
-  ) {}
+  ) { }
 
   ngOnInit() {
     this.modelService.loading$.subscribe(v => { this.isLoading = v; this.cdr.detectChanges(); });
     this.modelService.loadProgress$.subscribe(v => { this.loadProgress = v; this.cdr.detectChanges(); });
-    this.modelService.parts$.subscribe(parts => { this.parts = parts; this.cdr.detectChanges(); });
+    this.modelService.parts$.subscribe(parts => {
+      this.parts = parts;
+      this.treeNodes = this.buildTreeNodes(parts);
+      this.cdr.detectChanges();
+    });
+  }
+
+  buildTreeNodes(parts: ModelPart[]): TreeNode[] {
+    return parts.map(part => {
+      return {
+        data: part,
+        expanded: true,
+        children: part.children ? this.buildTreeNodes(part.children) : []
+      };
+    });
   }
 
   ngAfterViewInit() {
@@ -63,13 +80,39 @@ export class AppComponent implements OnInit {
     this.viewerRef.setExplodeAnimated(this.explodeValue, 400);
   }
 
+  isIsolated = false;
+
   resetAll() {
+    this.isIsolated = false;
+    this.viewerRef.isolatePart(null);
     this.explodeValue = 0;
     this.selectedPart = null;
     this.viewerRef.highlightPart(null);
     this.viewerRef.implodeAll();
     this.viewerRef.setExplodeAnimated(0, 600);
     this.viewerRef.resetCamera();
+  }
+
+  isolateSelectedPart() {
+    if (this.selectedPart) {
+      this.isIsolated = true;
+      this.explodeValue = 0;
+      this.viewerRef.isolatePart(this.selectedPart.id);
+    }
+  }
+
+  exitIsolation() {
+    this.isIsolated = false;
+    this.explodeValue = 0;
+    this.viewerRef.isolatePart(null);
+    // Maintain selection but reset explosion
+    if (this.selectedPart) {
+      this.viewerRef.highlightPart(this.selectedPart);
+    }
+  }
+
+  playSequence() {
+    this.viewerRef.playDemoSequence();
   }
 
   // ── Wireframe ─────────────────────────────────────────────────────────
@@ -124,13 +167,8 @@ export class AppComponent implements OnInit {
 
   onPartHovered(part: ModelPart | null) {
     this.hoveredPart = part;
-    // Only do hover-explode if nothing is selected
-    if (!this.selectedPart) {
-      if (part) {
-        this.viewerRef.explodePartById(part.id, 1.5, 300);
-      } else {
-        this.viewerRef.implodeAll(300);
-      }
+    if (this.viewerRef) {
+      this.viewerRef.setHoveredPart(part);
     }
     this.cdr.detectChanges();
   }
@@ -166,3 +204,4 @@ export class AppComponent implements OnInit {
 
   getVisibleCount() { return this.parts.filter(p => p.visible).length; }
 }
+

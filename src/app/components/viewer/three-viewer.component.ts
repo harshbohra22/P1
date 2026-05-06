@@ -5,7 +5,11 @@ import {
 import { CommonModule } from '@angular/common';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { OutlinePass } from 'three/examples/jsm/postprocessing/OutlinePass.js';
 import { ModelPart } from '../../services/model.service';
+import gsap from 'gsap';
 
 @Component({
   selector: 'app-three-viewer',
@@ -21,12 +25,6 @@ import { ModelPart } from '../../services/model.service';
         {{ hoveredPart?.name }}
       </div>
 
-      <!-- Axes legend -->
-      <div class="axes-legend">
-        <span style="color:#ff6b6b">X</span>
-        <span style="color:#4ecdc4">Y</span>
-        <span style="color:#45b7d1">Z</span>
-      </div>
     </div>
   `,
   styles: [`
@@ -34,7 +32,7 @@ import { ModelPart } from '../../services/model.service';
       position: relative;
       width: 100%;
       height: 100%;
-      background: #0a0a0f;
+      background: #ffffff;
       border-radius: 12px;
       overflow: hidden;
     }
@@ -61,19 +59,7 @@ import { ModelPart } from '../../services/model.service';
       white-space: nowrap;
       &.visible { opacity: 1; }
     }
-    .axes-legend {
-      position: absolute;
-      bottom: 16px;
-      right: 16px;
-      display: flex;
-      gap: 8px;
-      font-family: 'Space Mono', monospace;
-      font-size: 13px;
-      font-weight: 700;
-      background: rgba(0,0,0,0.5);
-      padding: 6px 12px;
-      border-radius: 8px;
-    }
+
   `]
 })
 export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
@@ -88,8 +74,12 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private controls!: OrbitControls;
+  private composer!: EffectComposer;
+  private outlinePass!: OutlinePass;
+  private hoverOutlinePass!: OutlinePass;
   private frameId: number | null = null;
   private parts: ModelPart[] = [];
+  private flatParts: ModelPart[] = [];
   private sceneGroup: THREE.Group | null = null;
   private partExplodeDirs = new Map<string, THREE.Vector3>(); // bbox-based explode directions
   private raycaster = new THREE.Raycaster();
@@ -124,8 +114,8 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
 
     // Scene
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0a0a14);
-    this.scene.fog = new THREE.Fog(0x0a0a14, 20, 60);
+    this.scene.background = new THREE.Color(0xffffff);
+    this.scene.fog = new THREE.Fog(0xffffff, 20, 60);
 
     // Camera
     this.camera = new THREE.PerspectiveCamera(
@@ -159,15 +149,27 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
     rim.position.set(-4, 6, -4);
     this.scene.add(rim);
 
-    // Grid
-    const grid = new THREE.GridHelper(20, 20, 0x222233, 0x151525);
-    grid.position.y = -2;
-    this.scene.add(grid);
 
-    // Axes helper
-    const axes = new THREE.AxesHelper(3);
-    axes.position.set(-7, -1.8, -7);
-    this.scene.add(axes);
+
+    // Post-processing setup
+    this.composer = new EffectComposer(this.renderer);
+    const renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(renderPass);
+
+    this.outlinePass = new OutlinePass(new THREE.Vector2(canvas.clientWidth, canvas.clientHeight), this.scene, this.camera);
+    this.outlinePass.visibleEdgeColor.set('#4ecdc4');
+    this.outlinePass.hiddenEdgeColor.set('#000000');
+    this.outlinePass.edgeStrength = 6;
+    this.outlinePass.edgeThickness = 2;
+    this.outlinePass.pulsePeriod = 0; // Set to > 0 for pulsing effect
+    this.composer.addPass(this.outlinePass);
+
+    this.hoverOutlinePass = new OutlinePass(new THREE.Vector2(canvas.clientWidth, canvas.clientHeight), this.scene, this.camera);
+    this.hoverOutlinePass.visibleEdgeColor.set('#4a90e2'); // Bright Blue for Hover
+    this.hoverOutlinePass.hiddenEdgeColor.set('#000000');
+    this.hoverOutlinePass.edgeStrength = 5;
+    this.hoverOutlinePass.edgeThickness = 2;
+    this.composer.addPass(this.hoverOutlinePass);
   }
 
   // ── Public: Load parts into scene ─────────────────────────────────────
@@ -179,18 +181,23 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
     }
 
     this.parts = parts;
+    this.flatParts = this.flattenParts(parts);
 
     // Wrap all part meshes in a single group and add to scene.
-    // This preserves the relative hierarchy of GLB models.
     this.sceneGroup = new THREE.Group();
-    parts.forEach(p => this.sceneGroup!.add(p.mesh));
+    this.flatParts.forEach(p => {
+      // Only add actual meshes, not dummy groups
+      if (p.mesh instanceof THREE.Mesh) {
+        this.sceneGroup!.add(p.mesh);
+      }
+    });
     this.scene.add(this.sceneGroup);
 
     // fitCamera normalizes model scale — do it first
     this.fitCamera();
 
     // After normalization, re-capture originalPosition in local space
-    parts.forEach(p => {
+    this.flatParts.forEach(p => {
       p.originalPosition = p.mesh.position.clone();
       p.originalRotation = p.mesh.rotation.clone();
     });
@@ -199,26 +206,48 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
     this.computeExplodeDirs();
   }
 
+  private flattenParts(parts: ModelPart[]): ModelPart[] {
+    let result: ModelPart[] = [];
+    for (const p of parts) {
+      result.push(p);
+      if (p.children) {
+        result = result.concat(this.flattenParts(p.children));
+      }
+    }
+    return result;
+  }
+
   // ── Explode direction pre-computation ────────────────────────────────
-  /**
-   * Compute explode direction for each part using its bounding-box center.
-   * This works even when all mesh.position values are (0,0,0).
-   */
   private computeExplodeDirs() {
-    if (!this.sceneGroup || this.parts.length === 0) return;
+    if (!this.sceneGroup || this.flatParts.length === 0) return;
     this.partExplodeDirs.clear();
 
-    // Model center in world space
-    const modelBox = new THREE.Box3().setFromObject(this.sceneGroup);
-    const modelCenter = modelBox.getCenter(new THREE.Vector3());
+    // Center of ONLY visible parts
+    const visibleBox = new THREE.Box3();
+    let hasVisible = false;
+    this.flatParts.forEach(p => {
+      if (p.visible && p.mesh instanceof THREE.Mesh) {
+        const partBox = new THREE.Box3().setFromObject(p.mesh);
+        if (!partBox.isEmpty()) {
+           visibleBox.expandByPoint(partBox.min);
+           visibleBox.expandByPoint(partBox.max);
+           hasVisible = true;
+        }
+      }
+    });
 
-    this.parts.forEach(part => {
+    if (!hasVisible) return;
+    const center = visibleBox.getCenter(new THREE.Vector3());
+
+    this.flatParts.forEach(part => {
+      if (!(part.mesh instanceof THREE.Mesh) || !part.visible) return;
+
       // Part bbox center in world space
       const partBox = new THREE.Box3().setFromObject(part.mesh);
       const partCenter = partBox.getCenter(new THREE.Vector3());
 
-      // Outward direction from model center → part center
-      let dir = partCenter.clone().sub(modelCenter);
+      // Outward direction from visible center → part center
+      let dir = partCenter.clone().sub(center);
       if (dir.length() < 0.001) {
         // Part is exactly at model center — random outward direction
         dir.set(
@@ -240,7 +269,8 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
     const worldOffset = amount * 5;
     const localOffset = worldOffset / localScale;
 
-    this.parts.forEach((part) => {
+    this.flatParts.forEach((part) => {
+      if (!(part.mesh instanceof THREE.Mesh) || !part.visible) return;
       const dir = this.partExplodeDirs.get(part.id) ?? new THREE.Vector3(0, 1, 0);
       const target = part.originalPosition.clone().add(dir.clone().multiplyScalar(localOffset));
       this.animatePosition(part.mesh, part.mesh.position.clone(), target, duration);
@@ -253,7 +283,9 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
     const localScale = this.sceneGroup.scale.x || 1;
     const localOffset = explodeDistance / localScale;
 
-    this.parts.forEach((part) => {
+    this.flatParts.forEach((part) => {
+      if (!(part.mesh instanceof THREE.Mesh)) return;
+
       if (part.id === partId) {
         const dir = this.partExplodeDirs.get(part.id) ?? new THREE.Vector3(0, 1, 0);
         const target = part.originalPosition.clone().add(dir.clone().multiplyScalar(localOffset));
@@ -272,12 +304,107 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
 
   /** Snap all parts back and restore full opacity */
   implodeAll(duration = 500) {
-    this.parts.forEach((part) => {
+    this.flatParts.forEach((part) => {
+      if (!(part.mesh instanceof THREE.Mesh)) return;
       this.animatePosition(
         part.mesh, part.mesh.position.clone(), part.originalPosition.clone(), duration
       );
       this.setMeshOpacity(part.mesh, 1, false);
     });
+  }
+
+  /** Sequenced "Movie-like" disassembly of the demo engine OR custom GLB */
+  playDemoSequence() {
+    if (!this.sceneGroup || this.flatParts.length === 0) return;
+
+    // Reset everything first
+    this.implodeAll(0);
+    this.highlightPart(null);
+
+    // Create a GSAP Timeline
+    const tl = gsap.timeline();
+
+    // 1. Smoothly rotate camera to a standard "straight" front view
+    tl.to(this.camera.position, {
+      x: 0, 
+      y: 2, 
+      z: 12,
+      duration: 1.0,
+      ease: "power2.inOut",
+      onUpdate: () => { 
+        this.controls.target.set(0, 0, 0); 
+        this.controls.update(); 
+      }
+    });
+
+    // 2. Move backwards on Z-axis (zoom out) before exploding
+    tl.to(this.camera.position, {
+      z: 18,
+      duration: 1.0,
+      ease: "power1.inOut",
+      onUpdate: () => this.controls.update()
+    });
+
+    const getPartMesh = (id: string) => this.flatParts.find(p => p.id === id)?.mesh;
+    const valveCover = getPartMesh('valve-cover');
+
+    if (valveCover) {
+      // --- DEMO ENGINE CHOREOGRAPHY ---
+      const cylinderHead = getPartMesh('cylinder-head');
+      const oilPan = getPartMesh('oil-pan');
+      const crankshaft = getPartMesh('crankshaft');
+      const intake = getPartMesh('intake-manifold');
+      const exhaust = getPartMesh('exhaust-manifold');
+      const waterPump = getPartMesh('water-pump');
+      const pistons = [
+        getPartMesh('piston-1'), getPartMesh('piston-2'),
+        getPartMesh('piston-3'), getPartMesh('piston-4')
+      ].filter(p => p); // remove undefined
+
+      const localScale = this.sceneGroup.scale.x || 1;
+
+      // Step 1: Lift Valve Cover (Starts at 1s, after camera)
+      if (valveCover) tl.to(valveCover.position, { y: valveCover.position.y + (3 / localScale), duration: 0.8, ease: "power1.inOut" });
+
+      // Step 2: Lift Cylinder Head & move Manifolds/Pump
+      if (cylinderHead) tl.to(cylinderHead.position, { y: cylinderHead.position.y + (1.5 / localScale), duration: 0.8, ease: "power2.inOut" });
+      if (intake) tl.to(intake.position, { z: intake.position.z + (2 / localScale), duration: 0.8, ease: "power2.inOut" }, "<");
+      if (exhaust) tl.to(exhaust.position, { z: exhaust.position.z - (2 / localScale), duration: 0.8, ease: "power2.inOut" }, "<");
+      if (waterPump) tl.to(waterPump.position, { x: waterPump.position.x + (2 / localScale), duration: 0.8, ease: "power2.inOut" }, "<");
+
+      // Step 3: Drop Oil Pan
+      if (oilPan) tl.to(oilPan.position, { y: oilPan.position.y - (2 / localScale), duration: 0.8, ease: "power2.inOut" }, "<");
+
+      // Step 4: Push Pistons outward
+      if (pistons.length > 0) tl.to(pistons.map(p => p!.position), { y: "+=" + (1 / localScale), duration: 1.0, ease: "back.out(1.7)" });
+
+      // Step 5: Pull Crankshaft out
+      if (crankshaft) tl.to(crankshaft.position, { z: crankshaft.position.z + (3 / localScale), duration: 1.0, ease: "power2.out" }, "-=0.5");
+
+    } else {
+      // --- CUSTOM UPLOADED GLB SEQUENCE ---
+      // Explode outwards by a fixed distance
+      const localScale = this.sceneGroup.scale.x || 1;
+      const localOffset = 2 / localScale; 
+      
+      const validParts = this.flatParts.filter(p => p.mesh instanceof THREE.Mesh);
+      const staggerDelay = Math.min(0.2, 3.0 / Math.max(1, validParts.length));
+
+      let startTime = 1.0; // Start at 1.0s (after camera move finishes)
+      
+      validParts.forEach((part, index) => {
+        const dir = this.partExplodeDirs.get(part.id) ?? new THREE.Vector3(0, 1, 0);
+        const target = part.originalPosition.clone().add(dir.clone().multiplyScalar(localOffset));
+        
+        tl.to(part.mesh.position, {
+          x: target.x,
+          y: target.y,
+          z: target.z,
+          duration: 0.8,
+          ease: "power2.out"
+        }, startTime + (index * staggerDelay));
+      });
+    }
   }
 
   /** Set opacity on all meshes within an Object3D */
@@ -297,20 +424,19 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
   private animatePosition(
     obj: THREE.Object3D, from: THREE.Vector3, to: THREE.Vector3, dur: number
   ) {
-    const start = performance.now();
-    const tick = (now: number) => {
-      const t = Math.min((now - start) / dur, 1);
-      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // easeInOut
-      obj.position.lerpVectors(from, to, ease);
-      if (t < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
+    gsap.to(obj.position, {
+      x: to.x,
+      y: to.y,
+      z: to.z,
+      duration: dur / 1000,
+      ease: "power2.inOut"
+    });
   }
 
   // ── Wireframe toggle ──────────────────────────────────────────────────
   setWireframe(val: boolean) {
     this.wireframe = val;
-    this.parts.forEach(p => {
+    this.flatParts.forEach(p => {
       p.mesh.traverse(child => {
         if (child instanceof THREE.Mesh) {
           const mats = Array.isArray(child.material) ? child.material : [child.material];
@@ -320,40 +446,100 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
     });
   }
 
-  // ── Highlight ─────────────────────────────────────────────────────────
-  highlightPart(part: ModelPart | null) {
-    this.parts.forEach(p => {
-      p.highlighted = part?.id === p.id;
-      p.mesh.traverse(child => {
-        if (child instanceof THREE.Mesh) {
-          const mats = Array.isArray(child.material) ? child.material : [child.material];
-          mats.forEach((m: any) => {
-            if ('emissive' in m) {
-              m.emissive.set(p.highlighted ? 0x224422 : 0x000000);
-              m.emissiveIntensity = p.highlighted ? 0.6 : 0;
-            }
-          });
-        }
-      });
-    });
+  // ── Hover Outline ─────────────────────────────────────────────────
+  setHoveredPart(part: ModelPart | null) {
+    this.hoveredPart = part;
+    
+    if (part && part.mesh instanceof THREE.Mesh) {
+      // Only show hover outline if the part is not already selected (highlighted)
+      if (!part.highlighted) {
+        this.hoverOutlinePass.selectedObjects = [part.mesh];
+      } else {
+        this.hoverOutlinePass.selectedObjects = [];
+      }
+    } else {
+      this.hoverOutlinePass.selectedObjects = [];
+    }
   }
 
-  // ── Visibility ────────────────────────────────────────────────────────
+  // ── Highlight (Selection Outline) ─────────────────────────────────────
+  highlightPart(part: ModelPart | null) {
+    this.flatParts.forEach(p => {
+      p.highlighted = part?.id === p.id;
+    });
+
+    if (part && part.mesh instanceof THREE.Mesh) {
+      this.outlinePass.selectedObjects = [part.mesh];
+    } else {
+      this.outlinePass.selectedObjects = [];
+    }
+  }
+
+  // ── Visibility & Isolation ─────────────────────────────────────────────
   setPartVisible(partId: string, visible: boolean) {
-    const part = this.parts.find(p => p.id === partId);
+    const part = this.flatParts.find(p => p.id === partId);
     if (part) {
       part.visible = visible;
       part.mesh.visible = visible;
     }
   }
 
+  private getDescendantIds(part: ModelPart): Set<string> {
+    const ids = new Set<string>();
+    ids.add(part.id);
+    if (part.children) {
+      part.children.forEach(c => {
+        this.getDescendantIds(c).forEach(id => ids.add(id));
+      });
+    }
+    return ids;
+  }
+
+  isolatePart(partId: string | null) {
+    if (partId) {
+      const rootPart = this.flatParts.find(p => p.id === partId);
+      if (!rootPart) return;
+      
+      const isolateIds = this.getDescendantIds(rootPart);
+      
+      this.flatParts.forEach(p => {
+        const isIsolated = isolateIds.has(p.id);
+        p.visible = isIsolated;
+        p.mesh.visible = isIsolated;
+      });
+    } else {
+      // Un-isolate
+      this.flatParts.forEach(p => {
+        p.visible = true;
+        p.mesh.visible = true;
+      });
+    }
+
+    // Reset everything, recalculate center, and zoom in
+    this.implodeAll(0);
+    this.computeExplodeDirs();
+    this.fitCamera();
+  }
+
   // ── Camera fit ────────────────────────────────────────────────────────
   private fitCamera() {
-    if (!this.sceneGroup) return;
+    if (!this.sceneGroup || this.flatParts.length === 0) return;
 
-    // Compute bounding box of everything in the scene group
-    const box = new THREE.Box3().setFromObject(this.sceneGroup);
-    if (box.isEmpty()) return;
+    // Compute bounding box of ONLY visible parts
+    const box = new THREE.Box3();
+    let hasVisible = false;
+    this.flatParts.forEach(p => {
+      if (p.visible && p.mesh instanceof THREE.Mesh) {
+        const partBox = new THREE.Box3().setFromObject(p.mesh);
+        if (!partBox.isEmpty()) {
+           box.expandByPoint(partBox.min);
+           box.expandByPoint(partBox.max);
+           hasVisible = true;
+        }
+      }
+    });
+
+    if (!hasVisible) return;
 
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
@@ -361,7 +547,7 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
 
     if (maxDim > 0) {
       // Normalize: scale the group so the model fits in TARGET_SIZE units
-      const TARGET_SIZE = 5;
+      const TARGET_SIZE = 4; // Made slightly smaller
       const scale = TARGET_SIZE / maxDim;
       this.sceneGroup.scale.setScalar(scale);
       // Re-center the group so it sits at world origin
@@ -372,8 +558,8 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
       );
     }
 
-    // After normalization, place camera at a good distance
-    const dist = 8;
+    // After normalization, place camera at a good distance to see the explosion
+    const dist = 12;
     this.camera.position.set(dist, dist * 0.6, dist);
     this.camera.near = 0.01;
     this.camera.far = 1000;
@@ -390,7 +576,7 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
   private animate() {
     this.frameId = requestAnimationFrame(() => this.animate());
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    this.composer.render();
   }
 
   // ── Mouse events ─────────────────────────────────────────────────────
@@ -418,20 +604,22 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
   private checkHover() {
     const hit = this.raycast();
     const prev = this.hoveredPart;
-    this.zone.run(() => {
-      this.hoveredPart = hit;
-      if (prev?.id !== hit?.id) this.partHovered.emit(hit);
-    });
+    if (prev?.id !== hit?.id) {
+      this.setHoveredPart(hit);
+      this.zone.run(() => {
+        this.partHovered.emit(hit);
+      });
+    }
   }
 
   private raycast(): ModelPart | null {
     this.raycaster.setFromCamera(this.mouse, this.camera);
     const meshes: THREE.Object3D[] = [];
-    this.parts.forEach(p => { if (p.visible) p.mesh.traverse(c => { if (c instanceof THREE.Mesh) meshes.push(c); }); });
+    this.flatParts.forEach(p => { if (p.visible && p.mesh instanceof THREE.Mesh) meshes.push(p.mesh); });
     const hits = this.raycaster.intersectObjects(meshes, true);
     if (!hits.length) return null;
     const hitObj = hits[0].object;
-    return this.parts.find(p => {
+    return this.flatParts.find(p => {
       let found = false;
       p.mesh.traverse(c => { if (c === hitObj) found = true; });
       return found;
@@ -445,6 +633,7 @@ export class ThreeViewerComponent implements AfterViewInit, OnDestroy {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
       this.renderer.setSize(w, h, false);
+      this.composer.setSize(w, h);
       this.camera.aspect = w / h;
       this.camera.updateProjectionMatrix();
     });
